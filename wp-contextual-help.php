@@ -2,7 +2,7 @@
 /*
 Plugin Name: WP Contextual Help
 Description: Allows a developer to easily extend the contextual help dropdown content area in WordPress
-Version: 0.0.3
+Version: 1.0.0
 Author: kevinlangleyjr
 Plugin URI: http://voceplatforms.com
 */
@@ -11,9 +11,10 @@ if( !class_exists( 'WP_Contextual_Help' ) ){
 
 	class WP_Contextual_Help {
 
-		static $help_docs_dir = '';
-		static $help_docs_img_url = '';
+		static $help_docs_dir = array();
+		static $help_docs_img_url = array();
 		static $tabs = array();
+		static $tabs_by_page = array();
 
 		/**
 		 * Initialize plugin
@@ -22,14 +23,17 @@ if( !class_exists( 'WP_Contextual_Help' ) ){
 		static function init(){
 			global $pagenow;
 
-			self::$help_docs_dir = apply_filters( 'wp_contextual_help_docs_dir', get_template_directory() . '/includes/help-docs' );
-			self::$help_docs_img_url = apply_filters( 'wp_contextual_help_docs_url', get_template_directory_uri() . '/includes/help-docs/img' );
+			self::$help_docs_dir[] = get_template_directory() . '/includes/help-docs';
+			self::$help_docs_img_url[] = get_template_directory_uri() . '/includes/help-docs/img';
+			self::$help_docs_dir = apply_filters( 'wp_contextual_help_docs_dir', self::$help_docs_dir );
+			self::$help_docs_img_url = apply_filters( 'wp_contextual_help_docs_url', self::$help_docs_img_url );
 
 			foreach( self::$tabs as $tab ){
 				foreach( (array) $tab['page'] as $page ){
-					add_action( 'load-' . $page, function() use ($tab) {
-						self::add_tab_to_screen($tab);
-					} );
+					self::$tabs_by_page[ $page ][] = $tab;
+					if ( count( self::$tabs_by_page[ $page ] ) < 2 ) {
+						add_action( 'load-' . $page, array( __CLASS__, 'add_tab_to_screen' ) );
+					}
 				}
 			}
 		}
@@ -62,21 +66,25 @@ if( !class_exists( 'WP_Contextual_Help' ) ){
 		 *
 		 * Loops through all tabs and adds them on the appropriate screen
 		 */
-		static function add_tab_to_screen($tab){
-			// if post type arg is set, check the post type - if not same return
-			if( isset( $tab['args']['post_type'] ) ){
-				if( ! self::is_current_post_type( $tab ) ){
-					return;
+		static function add_tab_to_screen() {
+			$id = substr( current_action(), 5 );
+			$tabs = self::$tabs_by_page[ $id ];
+			foreach ( ( array ) $tabs as $tab ) {
+				// if post type arg is set, check the post type - if not same return
+				if ( isset( $tab[ 'args' ][ 'post_type' ] ) ) {
+					if ( !self::is_current_post_type( $tab ) ) {
+						continue;
+					}
 				}
-			}
 
-			$callback = !empty( $tab['args']['callback'] ) ? $tab['args']['callback'] : array( __CLASS__, 'echo_tab_html' );
+				$callback = !empty( $tab[ 'args' ][ 'callback' ] ) ? $tab[ 'args' ][ 'callback' ] : array( __CLASS__, 'echo_tab_html' );
 
-			get_current_screen()->add_help_tab( array(
-					'id' => $tab['id'],
-					'title' => $tab['title'],
+				get_current_screen()->add_help_tab( array(
+					'id' => $tab[ 'id' ],
+					'title' => $tab[ 'title' ],
 					'callback' => $callback
-			) );
+				) );
+			}
 		}
 
 		/**
@@ -86,24 +94,26 @@ if( !class_exists( 'WP_Contextual_Help' ) ){
 		 * @return void
 		 */
 		static function echo_tab_html( $screen, $screen_tab ){
-			$tab = self::$tabs[$screen_tab['id']];
-			$file_name = !empty($tab['file']) ? $tab['file'] : $tab['id'] . '.html';
-			$file = self::$help_docs_dir . DIRECTORY_SEPARATOR . $file_name;
+			$content = '';
+			$tab = self::$tabs[ $screen_tab[ 'id' ] ];
+			$file_name = !empty( $tab[ 'file' ] ) ? $tab[ 'file' ] : $tab[ 'id' ] . '.html';
+			for( $i = 0; $i < count(self::$help_docs_dir); $i++ ){
+				$file = self::$help_docs_dir[$i] . DIRECTORY_SEPARATOR . $file_name;
 
-			$post_type_pages = array( 'post.php', 'post-new.php' );
-			$current_page = false;
-
-			if( file_exists( $file ) ){
-				if( !empty( $tab['args']['wpautop'] ) ){
-					$content = wpautop( file_get_contents( $file ) );
-				} else {
-					$content = file_get_contents( $file );
+				if ( file_exists( $file ) ) {
+					if ( !empty( $tab[ 'args' ][ 'wpautop' ] ) ) {
+						$content = wpautop( file_get_contents( $file ) );
+					} else {
+						$content = file_get_contents( $file );
+					}
+					break;
 				}
-			} else {
-				$content = 'The provided HTML file is invalid.';
+			}
+			if ( empty( $content ) ) {
+				$content = 'The provided HTML file is invalid or not founded.';
 			}
 
-			$content = str_replace( '{WP_HELP_IMG_URL}', self::$help_docs_img_url, $content );
+			$content = str_replace( '{WP_HELP_IMG_URL}', self::$help_docs_img_url[$i], $content );
 
 			echo $content;
 		}
